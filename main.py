@@ -108,6 +108,37 @@ def consultar_blacklist_cpf(token: str, base_url: str, cpf: str) -> dict:
     return response.json()
 
 
+def _consulta_segura(func, *args) -> dict:
+    try:
+        return func(*args)
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def consultar_solicitacao(token: str, base_url: str, solicitacao: dict) -> dict:
+    return {
+        "solicitacao_id": solicitacao.get("solicitacao_id"),
+        "debitos": _consulta_segura(
+            buscar_debitos, token, base_url, solicitacao.get("uc")
+        ),
+        "endereco": _consulta_segura(
+            validar_endereco,
+            token,
+            base_url,
+            solicitacao.get("endereco_cep"),
+            solicitacao.get("endereco_logradouro"),
+            solicitacao.get("endereco_cidade"),
+            solicitacao.get("endereco_uf"),
+        ),
+        "telefone": _consulta_segura(
+            validar_telefone, token, base_url, solicitacao.get("telefone")
+        ),
+        "blacklist": _consulta_segura(
+            consultar_blacklist_cpf, token, base_url, solicitacao.get("cpf_cnpj")
+        ),
+    }
+
+
 def main() -> None:
     token = os.getenv("TOKEN_API")
     base_url = os.getenv("BASE_URL")
@@ -122,6 +153,14 @@ def main() -> None:
 
     solicitacoes = buscar_solicitacoes(token, base_url, int(limit_raw))
     print(f"{len(solicitacoes)} solicitações carregadas")
+
+    consultas = []
+    for solicitacao in solicitacoes:
+        resultado = consultar_solicitacao(token, base_url, solicitacao)
+        consultas.append(resultado)
+        print(solicitacao["solicitacao_id"], "consultada")
+
+    print(f"{len(consultas)} solicitações consultadas")
 
 
 if __name__ == "__main__":
