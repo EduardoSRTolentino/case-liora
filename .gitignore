@@ -1,2 +1,5 @@
 .env*
 documentacao.txt*
+CONTEXTO.md*
+desafio.md*
+__pycache__/
