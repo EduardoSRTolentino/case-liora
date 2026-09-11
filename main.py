@@ -161,6 +161,16 @@ def consultar_solicitacao(token: str, base_url: str, solicitacao: dict) -> dict:
     }
 
 
+def enviar_avaliacao(token: str, base_url: str, payload: dict) -> dict:
+    response = requests.post(
+        f"{base_url}/avaliacoes",
+        headers={**_headers(token), "Content-Type": "application/json"},
+        json=payload,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _parse_data(data_str: str | None) -> date | None:
     if not data_str:
         return None
@@ -537,13 +547,22 @@ def main() -> None:
     solicitacoes = buscar_solicitacoes(token, base_url, int(limit_raw))
     print(f"{len(solicitacoes)} solicitações carregadas")
 
-    consultas = []
+    enviadas = 0
     for solicitacao in solicitacoes:
-        resultado = consultar_solicitacao(token, base_url, solicitacao)
-        consultas.append(resultado)
-        print(solicitacao["solicitacao_id"], "consultada")
+        consultas = consultar_solicitacao(token, base_url, solicitacao)
+        payload = avaliar_solicitacao(solicitacao, consultas)
+        solicitacao_id = payload["solicitacao_id"]
+        try:
+            enviar_avaliacao(token, base_url, payload)
+        except Exception as exc:
+            print(f"{solicitacao_id} erro ao enviar: {exc}")
+            continue
+        enviadas += 1
+        print(
+            f"{solicitacao_id} {payload['decisao']} (score {payload['score_risco']})"
+        )
 
-    print(f"{len(consultas)} solicitações consultadas")
+    print(f"{enviadas} avaliações enviadas")
 
 
 if __name__ == "__main__":
