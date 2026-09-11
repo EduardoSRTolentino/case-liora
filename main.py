@@ -234,10 +234,12 @@ def _digitos_documento(cpf_cnpj: str | None) -> list[int]:
 
 def _documento_malformado(cpf_cnpj: str | None, tipo_pessoa: str | None) -> bool:
     # A massa usa CPF/CNPJ sintético: dígito verificador inválido não é knockout.
-    # Só reprova vazio, tamanho errado ou todos os dígitos iguais.
+    # Só reprova vazio, tamanho errado, todos os dígitos iguais ou CPF com DV 00.
     digitos = _digitos_documento(cpf_cnpj)
     if tipo_pessoa == "PF":
-        return len(digitos) != 11 or len(set(digitos)) == 1
+        if len(digitos) != 11 or len(set(digitos)) == 1:
+            return True
+        return digitos[-2:] == [0, 0]
     if tipo_pessoa == "PJ":
         return len(digitos) != 14 or len(set(digitos)) == 1
     return True
@@ -327,6 +329,9 @@ def _verificar_knockouts(solicitacao: dict, consultas: dict, hoje: date | None =
     tipo_pessoa = solicitacao.get("tipo_pessoa")
     if _documento_malformado(solicitacao.get("cpf_cnpj"), tipo_pessoa):
         documento = "CPF" if tipo_pessoa == "PF" else "CNPJ"
+        digitos = _digitos_documento(solicitacao.get("cpf_cnpj"))
+        if tipo_pessoa == "PF" and len(digitos) == 11 and digitos[-2:] == [0, 0]:
+            return "CPF com dígitos verificadores 00"
         return f"{documento} com formato inválido"
 
     telefone = consultas.get("telefone") or {}

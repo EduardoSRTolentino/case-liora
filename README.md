@@ -89,7 +89,7 @@ Se qualquer consulta necessária vier com `{"error": "..."}` (incluindo 503 de d
 Se qualquer um disparar, a decisão é `reprovado` com `score_risco = 100`, sem calcular o scorecard.
 
 - Blacklist `true`
-- CPF/CNPJ malformado (vazio, tamanho errado ou todos os dígitos iguais). Dígito verificador sintético **não** é knockout: a massa usa documentos fictícios
+- CPF/CNPJ malformado (vazio, tamanho errado ou todos os dígitos iguais). CPF com os dois últimos dígitos `00` também é knockout. Dígito verificador sintético **não** é knockout nos demais casos: a massa usa documentos fictícios
 - Telefone VoIP `voip == true`
 - Corte programado `corte_programado == true`
 - Menor de 18 anos (PF com `data_nascimento`)
