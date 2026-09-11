@@ -34,7 +34,7 @@ C:/Users/Eduardo/AppData/Local/Programs/Python/Python314/python.exe main.py
 
 ## O que já funciona
 
-O `main.py` lista e consulta as solicitações. A decisão fica em `avaliar_solicitacao(solicitacao, consultas)` e já devolve o payload pronto para `POST /avaliacoes`. O loop principal **ainda não chama** essa função e **ainda não envia** o POST.
+O `main.py` lista as solicitações, consulta as APIs de apoio, decide com `avaliar_solicitacao` e envia cada payload em `POST /avaliacoes` (`enviar_avaliacao`). O endpoint é idempotente por token + `solicitacao_id`; reexecutar o script faz upsert.
 
 Hoje o fluxo:
 
@@ -45,7 +45,8 @@ Hoje o fluxo:
    - `GET /telefone/validar`
    - `GET /cpf/blacklist`
 3. Se uma consulta falhar, grava `{"error": "..."}` e segue (`_consulta_segura`).
-4. Acumula o resultado em memória e imprime `{solicitacao_id} consultada`.
+4. Chama `avaliar_solicitacao` e envia o payload em `POST /avaliacoes`. Falha no POST é logada e o lote continua.
+5. Imprime `{solicitacao_id} {decisao} (score {score_risco})` e, ao final, quantas avaliações foram enviadas.
 
 A massa da documentação fala em 1000 cenários (`SOL-2026-001` a `SOL-2026-1000`). A API devolve `total: 999` (último id `SOL-2026-999`); isso não é bug de paginação.
 
@@ -125,9 +126,9 @@ Exemplos sem knockout (pesos ainda sem renormalizar; no código os N/A são redi
 - débitos `s = 0` (22) → reprovado
 - recência + PJ sem vínculo (25) → reprovado
 
-## Payload de avaliação (ainda não enviado)
+## Payload de avaliação
 
-`avaliar_solicitacao` já monta o corpo esperado pelo `POST /avaliacoes`:
+`avaliar_solicitacao` monta o corpo enviado em `POST /avaliacoes`:
 
 - `solicitacao_id` e `cpf_cnpj`
 - `decisao`: `aprovado` \| `reprovado` \| `analise_manual`
@@ -139,8 +140,3 @@ Exemplos sem knockout (pesos ainda sem renormalizar; no código os N/A são redi
 O endpoint é idempotente por token + `solicitacao_id`.
 
 Cada chave de `verificacoes` reflete o critério isolado, não a decisão final: `reprovado` se aquele ponto seria knockout ou `s = 0`; `analise_manual` se a consulta daquele ponto falhou; `nao_aplicavel` para contrato/vínculo quando não cabem; `aprovado` nos demais casos.
-
-## O que falta
-
-- Chamar `avaliar_solicitacao` no loop principal
-- Enviar `POST /avaliacoes` com o payload montado
