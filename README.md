@@ -76,8 +76,8 @@ flowchart TD
   knock -->|sim| reprovado
   knock -->|nao| score
   score -->|risco_igual_0| aprovado
-  score -->|risco_1_a_20| manual
-  score -->|risco_maior_20| reprovado
+  score -->|risco_1_a_30| manual
+  score -->|risco_maior_30| reprovado
 ```
 
 ### Camada 0 — falha de API
@@ -89,7 +89,7 @@ Se qualquer consulta necessária vier com `{"error": "..."}` (incluindo 503 de d
 Se qualquer um disparar, a decisão é `reprovado` com `score_risco = 100`, sem calcular o scorecard.
 
 - Blacklist `true`
-- CPF/CNPJ com dígito verificador inválido (CPF para PF, CNPJ para PJ)
+- CPF/CNPJ malformado (vazio, tamanho errado ou todos os dígitos iguais). Dígito verificador sintético **não** é knockout: a massa usa documentos fictícios
 - Telefone VoIP `voip == true`
 - Corte programado `corte_programado == true`
 - Menor de 18 anos (PF com `data_nascimento`)
@@ -103,28 +103,29 @@ Pesos em pontos (base 100). `s` é o quanto aquele ponto passa.
 
 | Ponto | Peso | Subscore `s` |
 | --- | --- | --- |
-| Endereço | 22 | `1` se `valido` e `cep_consistente`. `0.4` se `valido == false` e existe `cep_correto_sugerido`. `0` se inválido sem sugestão |
-| Débitos da UC | 22 | `1` se `status == regular`, total 0, sem faturas em atraso e sem histórico. `0.6` se só `historico_inadimplencia`. `0.3` se `faturas_em_atraso > 0` e total `<= 300`. `0` nos demais casos (`status != regular` ou total `> 300`). Corte programado já é knockout |
-| Telefone | 18 | VoIP é knockout (este peso não entra nesse caso). Caso contrário `s = 1 - fraude_score/100`. Sem `fraude_score`, `s = 0` |
-| Recência da conta de luz | 15 | `1` se `conta_luz_emissao` nos últimos 60 dias; `0.5` se 61–120; `0` se `> 120` ou data ausente |
-| Contrato de locação | 13 (só alugado) | Próprio: N/A (renormaliza). Vigente e `>= 6` meses restantes: `1`. Vigente e `< 6` meses: `0.5`. Vencido / sem vigência: knockout |
-| Vínculo empresa | 10 (só PJ) | PF: N/A. PJ com `vinculo_empresa` verdadeiro: `1`. PJ sem vínculo: `0` |
+| Endereço | 15 | `1` se `valido` e `cep_consistente`. `0.4` se `valido == false` e existe `cep_correto_sugerido`. `0` se inválido sem sugestão |
+| Débitos da UC | 28 | `1` se `status == regular`, total 0, sem faturas em atraso e sem histórico. `0.6` se só `historico_inadimplencia`. `0.3` se `faturas_em_atraso > 0` e total `<= 300`. `0` nos demais casos (`status != regular` ou total `> 300`). Corte programado já é knockout |
+| Telefone | 12 | VoIP é knockout (este peso não entra nesse caso). `1` se `fraude_score <= 20`. `0.5` se `21–70`. `0` se `> 70` ou sem `fraude_score` |
+| Recência da conta de luz | 10 | `1` se `conta_luz_emissao` nos últimos 180 dias; `0.5` se 181–270; `0` se `> 270` ou data ausente |
+| Contrato de locação | 18 (só alugado) | Próprio: N/A (renormaliza). Vigente e `>= 6` meses restantes: `1`. Vigente e `< 6` meses: `0.5`. Vencido / sem vigência: knockout |
+| Vínculo empresa | 17 (só PJ) | PF: N/A. PJ com vínculo (`true`, `socio`, `sócio`, `sim`): `1`. PJ sem vínculo: `0` |
 
 ### Camada 3 — cortes da decisão
 
 Depois das falhas de API e dos knockouts:
 
 - `score_risco == 0` (todos os `s` aplicáveis = 1) → `aprovado`
-- `0 < score_risco <= 20` → `analise_manual` (falha leve/isolada: conta com ~90 dias, histórico de inadimplência, PJ sem vínculo)
-- `score_risco > 20` → `reprovado` (uma falha pesada ou várias leves somadas)
+- `0 < score_risco <= 30` → `analise_manual` (falha leve/isolada: endereço inválido, recência estourada, PJ sem vínculo)
+- `score_risco > 30` → `reprovado` (inadimplência sozinha, ou várias falhas leves somadas)
 
 Exemplos sem knockout (pesos ainda sem renormalizar; no código os N/A são redistribuídos):
 
-- só recência estourada (15) → manual
-- só PJ sem vínculo (10) → manual
-- só histórico de inadimplência (`22 * 0.4 = 8.8`) → manual
-- débitos `s = 0` (22) → reprovado
-- recência + PJ sem vínculo (25) → reprovado
+- só recência estourada (10) → manual
+- só PJ sem vínculo (17) → manual
+- só histórico de inadimplência (`28 * 0.4 = 11.2`) → manual
+- só endereço `s = 0` (15; ~23 após renormalizar PF) → manual
+- débitos `s = 0` (28; ~43 após renormalizar PF) → reprovado
+- endereço + recência (25; passa de 30 após renormalizar) → reprovado
 
 ## Payload de avaliação
 
@@ -135,7 +136,7 @@ Exemplos sem knockout (pesos ainda sem renormalizar; no código os N/A são redi
 - `score_risco`: valor do scorecard (knockout → 100; falha de API → 0)
 - `verificacoes`: um status por ponto (`aprovado` / `reprovado` / `analise_manual` / `nao_aplicavel`)
 - `justificativa`: em português, citando knockout, critérios com `s < 1` ou consulta que falhou
-- `agente_versao`: `v1.0.0-scorecard`
+- `agente_versao`: `v1.1.0-scorecard`
 
 O endpoint é idempotente por token + `solicitacao_id`.
 

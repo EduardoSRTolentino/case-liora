@@ -11,17 +11,26 @@ load_dotenv()
 
 MAX_DEBITOS_TENTATIVAS = 3
 
-AGENTE_VERSAO = "v1.0.0-scorecard"
+AGENTE_VERSAO = "v1.1.0-scorecard"
 
 # Pesos do scorecard (somam 100 quando todos os critérios são aplicáveis).
-PESO_ENDERECO = 22
-PESO_DEBITOS = 22
-PESO_TELEFONE = 18
-PESO_RECENCIA_CONTA_LUZ = 15
-PESO_CONTRATO_LOCACAO = 13
-PESO_VINCULO_EMPRESA = 10
+PESO_ENDERECO = 15
+PESO_DEBITOS = 28
+PESO_TELEFONE = 12
+PESO_RECENCIA_CONTA_LUZ = 10
+PESO_CONTRATO_LOCACAO = 18
+PESO_VINCULO_EMPRESA = 17
+
+LIMITE_SCORE_ANALISE_MANUAL = 30
+
+DIAS_RECENCIA_OK = 180
+DIAS_RECENCIA_PARCIAL = 270
+
+FRAUDE_SCORE_OK = 20
+FRAUDE_SCORE_PARCIAL = 70
 
 VALORES_TIPO_IMOVEL_ALUGUEL = {"alugado", "locado", "aluguel"}
+VALORES_VINCULO_VALIDO = {"true", "1", "sim", "socio", "sócio"}
 
 NOMES_CONSULTAS = {
     "debitos": "débitos da UC",
@@ -219,44 +228,19 @@ def _contrato_vencido(vencimento_str: str | None, hoje: date | None = None) -> b
     return vencimento < hoje
 
 
-def _validar_cpf(cpf: str | None) -> bool:
-    digitos = [int(c) for c in re.sub(r"\D", "", cpf or "")]
-    if len(digitos) != 11 or len(set(digitos)) == 1:
-        return False
-
-    def digito_verificador(base: list[int]) -> int:
-        soma = sum(d * peso for d, peso in zip(base, range(len(base) + 1, 1, -1)))
-        resto = soma % 11
-        return 0 if resto < 2 else 11 - resto
-
-    d1 = digito_verificador(digitos[:9])
-    d2 = digito_verificador(digitos[:9] + [d1])
-    return digitos[9] == d1 and digitos[10] == d2
+def _digitos_documento(cpf_cnpj: str | None) -> list[int]:
+    return [int(c) for c in re.sub(r"\D", "", cpf_cnpj or "")]
 
 
-def _validar_cnpj(cnpj: str | None) -> bool:
-    digitos = [int(c) for c in re.sub(r"\D", "", cnpj or "")]
-    if len(digitos) != 14 or len(set(digitos)) == 1:
-        return False
-
-    def digito_verificador(base: list[int], pesos: list[int]) -> int:
-        soma = sum(d * peso for d, peso in zip(base, pesos))
-        resto = soma % 11
-        return 0 if resto < 2 else 11 - resto
-
-    pesos_d1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    pesos_d2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    d1 = digito_verificador(digitos[:12], pesos_d1)
-    d2 = digito_verificador(digitos[:12] + [d1], pesos_d2)
-    return digitos[12] == d1 and digitos[13] == d2
-
-
-def _validar_documento(cpf_cnpj: str | None, tipo_pessoa: str | None) -> bool:
+def _documento_malformado(cpf_cnpj: str | None, tipo_pessoa: str | None) -> bool:
+    # A massa usa CPF/CNPJ sintético: dígito verificador inválido não é knockout.
+    # Só reprova vazio, tamanho errado ou todos os dígitos iguais.
+    digitos = _digitos_documento(cpf_cnpj)
     if tipo_pessoa == "PF":
-        return _validar_cpf(cpf_cnpj)
+        return len(digitos) != 11 or len(set(digitos)) == 1
     if tipo_pessoa == "PJ":
-        return _validar_cnpj(cpf_cnpj)
-    return False
+        return len(digitos) != 14 or len(set(digitos)) == 1
+    return True
 
 
 def _score_endereco(endereco: dict) -> float:
@@ -285,18 +269,21 @@ def _score_debitos(debitos: dict) -> float:
 def _score_telefone(telefone: dict) -> float:
     fraude_score = telefone.get("fraude_score")
     if fraude_score is None:
-        # Dado ausente é tratado como pior caso.
         return 0.0
-    return max(0.0, 1 - fraude_score / 100)
+    if fraude_score <= FRAUDE_SCORE_OK:
+        return 1.0
+    if fraude_score <= FRAUDE_SCORE_PARCIAL:
+        return 0.5
+    return 0.0
 
 
 def _score_recencia_conta_luz(conta_luz_emissao: str | None, hoje: date | None = None) -> float:
     dias = _dias_desde(conta_luz_emissao, hoje)
     if dias is None:
         return 0.0
-    if dias <= 60:
+    if dias <= DIAS_RECENCIA_OK:
         return 1.0
-    if dias <= 120:
+    if dias <= DIAS_RECENCIA_PARCIAL:
         return 0.5
     return 0.0
 
@@ -310,8 +297,16 @@ def _score_contrato_locacao(vencimento_str: str | None, hoje: date | None = None
     return 1.0 if vencimento is not None and vencimento >= limite else 0.5
 
 
-def _score_vinculo_empresa(vinculo_empresa: bool | None) -> float:
-    return 1.0 if vinculo_empresa is True else 0.0
+def _tem_vinculo_empresa(vinculo_empresa: object | None) -> bool:
+    if vinculo_empresa is True:
+        return True
+    if isinstance(vinculo_empresa, str):
+        return vinculo_empresa.strip().lower() in VALORES_VINCULO_VALIDO
+    return False
+
+
+def _score_vinculo_empresa(vinculo_empresa: object | None) -> float:
+    return 1.0 if _tem_vinculo_empresa(vinculo_empresa) else 0.0
 
 
 def _consultas_com_falha(consultas: dict) -> list[str]:
@@ -330,9 +325,9 @@ def _verificar_knockouts(solicitacao: dict, consultas: dict, hoje: date | None =
         return f"CPF/CNPJ na blacklist ({motivo})"
 
     tipo_pessoa = solicitacao.get("tipo_pessoa")
-    if not _validar_documento(solicitacao.get("cpf_cnpj"), tipo_pessoa):
+    if _documento_malformado(solicitacao.get("cpf_cnpj"), tipo_pessoa):
         documento = "CPF" if tipo_pessoa == "PF" else "CNPJ"
-        return f"{documento} com dígito verificador inválido"
+        return f"{documento} com formato inválido"
 
     telefone = consultas.get("telefone") or {}
     if telefone.get("voip") is True:
@@ -400,7 +395,7 @@ def _calcular_scorecard(solicitacao: dict, consultas: dict, hoje: date | None = 
 def _decisao_por_score(score_risco: int) -> str:
     if score_risco == 0:
         return "aprovado"
-    if score_risco <= 20:
+    if score_risco <= LIMITE_SCORE_ANALISE_MANUAL:
         return "analise_manual"
     return "reprovado"
 
@@ -425,7 +420,7 @@ def _verificacao_identidade_documento(solicitacao: dict, consultas: dict, hoje: 
         return "reprovado"
 
     tipo_pessoa = solicitacao.get("tipo_pessoa")
-    if not _validar_documento(solicitacao.get("cpf_cnpj"), tipo_pessoa):
+    if _documento_malformado(solicitacao.get("cpf_cnpj"), tipo_pessoa):
         return "reprovado"
 
     if tipo_pessoa == "PF":
@@ -480,7 +475,7 @@ def _verificacao_contrato_locacao(solicitacao: dict, hoje: date | None = None) -
 def _verificacao_vinculo_empresa(solicitacao: dict) -> str:
     if solicitacao.get("tipo_pessoa") != "PJ":
         return "nao_aplicavel"
-    return "aprovado" if solicitacao.get("vinculo_empresa") is True else "reprovado"
+    return "aprovado" if _tem_vinculo_empresa(solicitacao.get("vinculo_empresa")) else "reprovado"
 
 
 def _montar_verificacoes(solicitacao: dict, consultas: dict, hoje: date | None = None) -> dict:
